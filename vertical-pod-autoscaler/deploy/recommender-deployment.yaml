@@ -23,7 +23,7 @@ spec:
       serviceAccountName: vpa-recommender
       containers:
       - name: recommender
-        image: k8s.gcr.io/vpa-recommender:0.6.1
+        image: k8s.gcr.io/vpa-recommender:0.6.3
         imagePullPolicy: Always
         resources:
           limits:
@@ -34,3 +34,7 @@ spec:
             memory: 500Mi
         ports:
         - containerPort: 8080
+        args:
+          - --v=4
+          - --storage=prometheus
+          - --prometheus-address=http://cluster-monitoring-prometh-prometheus.infrastructure:9090

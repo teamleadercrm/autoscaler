@@ -26,7 +26,6 @@ import (
 	"k8s.io/apimachinery/pkg/util/wait"
 	vpa_types "k8s.io/autoscaler/vertical-pod-autoscaler/pkg/apis/autoscaling.k8s.io/v1"
 	vpa_clientset "k8s.io/autoscaler/vertical-pod-autoscaler/pkg/client/clientset/versioned"
-	e2e_common "k8s.io/kubernetes/test/e2e/common"
 	"k8s.io/kubernetes/test/e2e/framework"
 
 	"github.com/onsi/ginkgo"
@@ -39,8 +38,8 @@ const (
 	minimalMemoryLowerBound = "20Mi"
 	minimalMemoryUpperBound = "300Mi"
 	// the initial values should be outside minimal bounds
-	initialCPU    = "10m"
-	initialMemory = "10Mi"
+	initialCPU    = int64(10) // mCPU
+	initialMemory = int64(10) // MB
 )
 
 var _ = FullVpaE2eDescribe("Pods under VPA", func() {
@@ -62,22 +61,22 @@ var _ = FullVpaE2eDescribe("Pods under VPA", func() {
 	ginkgo.BeforeEach(func() {
 		ns := f.Namespace.Name
 		ginkgo.By("Setting up a hamster deployment")
-		rc = NewDynamicResourceConsumer("hamster", ns, e2e_common.KindDeployment,
+		rc = NewDynamicResourceConsumer("hamster", ns, KindDeployment,
 			replicas,
-			1,                                 /*initCPUTotal*/
-			10,                                /*initMemoryTotal*/
-			1,                                 /*initCustomMetric*/
-			ParseQuantityOrDie(initialCPU),    /*cpuRequest*/
-			ParseQuantityOrDie(initialMemory), /*memRequest*/
+			1,             /*initCPUTotal*/
+			10,            /*initMemoryTotal*/
+			1,             /*initCustomMetric*/
+			initialCPU,    /*cpuRequest*/
+			initialMemory, /*memRequest*/
 			f.ClientSet,
-			f.InternalClientset)
+			f.ScalesGetter)
 
 		ginkgo.By("Setting up a VPA CRD")
 		config, err := framework.LoadConfig()
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 		vpaCRD = NewVPA(f, "hamster-vpa", &autoscaling.CrossVersionObjectReference{
-			APIVersion: "extensions/v1beta1",
+			APIVersion: "apps/v1",
 			Kind:       "Deployment",
 			Name:       "hamster",
 		})
