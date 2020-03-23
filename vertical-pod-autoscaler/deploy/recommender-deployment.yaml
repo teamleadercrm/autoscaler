@@ -21,6 +21,8 @@ spec:
         app: vpa-recommender
     spec:
       serviceAccountName: vpa-recommender
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
       containers:
       - name: recommender
         image: k8s.gcr.io/vpa-recommender:0.6.3
