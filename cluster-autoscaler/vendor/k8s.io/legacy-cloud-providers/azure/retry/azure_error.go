@@ -27,7 +27,7 @@ import (
 	"strings"
 	"time"
 
-	"k8s.io/klog"
+	"k8s.io/klog/v2"
 )
 
 const (
@@ -285,4 +285,21 @@ func IsErrorRetriable(err error) bool {
 	}
 
 	return strings.Contains(err.Error(), "Retriable: true")
+}
+
+// HasStatusForbiddenOrIgnoredError return true if the given error code is part of the error message
+// This should only be used when trying to delete resources
+func HasStatusForbiddenOrIgnoredError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	if strings.Contains(err.Error(), fmt.Sprintf("HTTPStatusCode: %d", http.StatusNotFound)) {
+		return true
+	}
+
+	if strings.Contains(err.Error(), fmt.Sprintf("HTTPStatusCode: %d", http.StatusForbidden)) {
+		return true
+	}
+	return false
 }

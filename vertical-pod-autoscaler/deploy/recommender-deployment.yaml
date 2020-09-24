@@ -23,9 +23,12 @@ spec:
       serviceAccountName: vpa-recommender
       hostNetwork: true
       dnsPolicy: ClusterFirstWithHostNet
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534 # nobody
       containers:
       - name: recommender
-        image: k8s.gcr.io/vpa-recommender:0.6.3
+        image: us.gcr.io/k8s-artifacts-prod/autoscaling/vpa-recommender:0.8.0
         imagePullPolicy: Always
         resources:
           limits:

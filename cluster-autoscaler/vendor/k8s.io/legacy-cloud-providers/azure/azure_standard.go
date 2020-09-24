@@ -28,7 +28,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/Azure/azure-sdk-for-go/services/compute/mgmt/2019-07-01/compute"
+	"github.com/Azure/azure-sdk-for-go/services/compute/mgmt/2019-12-01/compute"
 	"github.com/Azure/azure-sdk-for-go/services/network/mgmt/2019-06-01/network"
 	"github.com/Azure/go-autorest/autorest/to"
 
@@ -38,10 +38,10 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/uuid"
 	cloudprovider "k8s.io/cloud-provider"
-	"k8s.io/klog"
-	azcache "k8s.io/legacy-cloud-providers/azure/cache"
-
 	"k8s.io/component-base/featuregate"
+	"k8s.io/klog/v2"
+	azcache "k8s.io/legacy-cloud-providers/azure/cache"
+	"k8s.io/legacy-cloud-providers/azure/metrics"
 	utilnet "k8s.io/utils/net"
 )
 
@@ -72,7 +72,7 @@ const (
 )
 
 var errNotInVMSet = errors.New("vm is not in the vmset")
-var providerIDRE = regexp.MustCompile(`^` + CloudProviderName + `://(?:.*)/Microsoft.Compute/virtualMachines/(.+)$`)
+var providerIDRE = regexp.MustCompile(`.*/subscriptions/(?:.*)/Microsoft.Compute/virtualMachines/(.+)$`)
 var backendPoolIDRE = regexp.MustCompile(`^/subscriptions/(?:.*)/resourceGroups/(?:.*)/providers/Microsoft.Network/loadBalancers/(.+)/backendAddressPools/(?:.*)`)
 var nicResourceGroupRE = regexp.MustCompile(`.*/subscriptions/(?:.*)/resourceGroups/(.+)/providers/Microsoft.Network/networkInterfaces/(?:.*)`)
 
@@ -135,7 +135,7 @@ func (az *Cloud) getNetworkResourceSubscriptionID() string {
 func (az *Cloud) mapLoadBalancerNameToVMSet(lbName string, clusterName string) (vmSetName string) {
 	vmSetName = strings.TrimSuffix(lbName, InternalLoadBalancerNameSuffix)
 	if strings.EqualFold(clusterName, vmSetName) {
-		vmSetName = az.vmSet.GetPrimaryVMSetName()
+		vmSetName = az.VMSet.GetPrimaryVMSetName()
 	}
 
 	return vmSetName
@@ -150,7 +150,7 @@ func (az *Cloud) getAzureLoadBalancerName(clusterName string, vmSetName string, 
 		clusterName = az.LoadBalancerName
 	}
 	lbNamePrefix := vmSetName
-	if strings.EqualFold(vmSetName, az.vmSet.GetPrimaryVMSetName()) || az.useStandardLoadBalancer() {
+	if strings.EqualFold(vmSetName, az.VMSet.GetPrimaryVMSetName()) || az.useStandardLoadBalancer() {
 		lbNamePrefix = clusterName
 	}
 	if isInternal {
@@ -171,8 +171,8 @@ func isMasterNode(node *v1.Node) bool {
 }
 
 // returns the deepest child's identifier from a full identifier string.
-func getLastSegment(ID string) (string, error) {
-	parts := strings.Split(ID, "/")
+func getLastSegment(ID, separator string) (string, error) {
+	parts := strings.Split(ID, separator)
 	name := parts[len(parts)-1]
 	if len(name) == 0 {
 		return "", fmt.Errorf("resource name was missing from identifier")
@@ -490,8 +490,8 @@ func (as *availabilitySet) GetZoneByNodeName(name string) (cloudprovider.Zone, e
 	}
 
 	zone := cloudprovider.Zone{
-		FailureDomain: failureDomain,
-		Region:        to.String(vm.Location),
+		FailureDomain: strings.ToLower(failureDomain),
+		Region:        strings.ToLower(to.String(vm.Location)),
 	}
 	return zone, nil
 }
@@ -519,7 +519,7 @@ func (as *availabilitySet) GetIPByNodeName(name string) (string, string, error) 
 	publicIP := ""
 	if ipConfig.PublicIPAddress != nil && ipConfig.PublicIPAddress.ID != nil {
 		pipID := *ipConfig.PublicIPAddress.ID
-		pipName, err := getLastSegment(pipID)
+		pipName, err := getLastSegment(pipID, "/")
 		if err != nil {
 			return "", "", fmt.Errorf("failed to publicIP name for node %q with pipID %q", name, pipID)
 		}
@@ -589,7 +589,7 @@ func (as *availabilitySet) getAgentPoolAvailabiliySets(nodes []*v1.Node) (agentP
 			// already added in the list
 			continue
 		}
-		asName, err := getLastSegment(asID)
+		asName, err := getLastSegment(asID, "/")
 		if err != nil {
 			klog.Errorf("as.getNodeAvailabilitySet - Node (%s)- getLastSegment(%s), err=%v", nodeName, asID, err)
 			return nil, err
@@ -680,7 +680,7 @@ func (as *availabilitySet) getPrimaryInterfaceWithVMSet(nodeName, vmSetName stri
 	if err != nil {
 		return network.Interface{}, err
 	}
-	nicName, err := getLastSegment(primaryNicID)
+	nicName, err := getLastSegment(primaryNicID, "/")
 	if err != nil {
 		return network.Interface{}, err
 	}
@@ -732,7 +732,7 @@ func (as *availabilitySet) EnsureHostInPool(service *v1.Service, nodeName types.
 			return "", "", "", nil, nil
 		}
 
-		klog.Errorf("error: az.EnsureHostInPool(%s), az.vmSet.GetPrimaryInterface.Get(%s, %s), err=%v", nodeName, vmName, vmSetName, err)
+		klog.Errorf("error: az.EnsureHostInPool(%s), az.VMSet.GetPrimaryInterface.Get(%s, %s), err=%v", nodeName, vmName, vmSetName, err)
 		return "", "", "", nil, err
 	}
 
@@ -808,6 +808,12 @@ func (as *availabilitySet) EnsureHostInPool(service *v1.Service, nodeName types.
 // EnsureHostsInPool ensures the given Node's primary IP configurations are
 // participating in the specified LoadBalancer Backend Pool.
 func (as *availabilitySet) EnsureHostsInPool(service *v1.Service, nodes []*v1.Node, backendPoolID string, vmSetName string, isInternal bool) error {
+	mc := metrics.NewMetricContext("services", "vmas_ensure_hosts_in_pool", as.ResourceGroup, as.SubscriptionID, service.Name)
+	isOperationSucceeded := false
+	defer func() {
+		mc.ObserveOperationWithResult(isOperationSucceeded)
+	}()
+
 	hostUpdates := make([]func() error, 0, len(nodes))
 	for _, node := range nodes {
 		localNodeName := node.Name
@@ -836,6 +842,7 @@ func (as *availabilitySet) EnsureHostsInPool(service *v1.Service, nodes []*v1.No
 		return utilerrors.Flatten(errs)
 	}
 
+	isOperationSucceeded = true
 	return nil
 }
 

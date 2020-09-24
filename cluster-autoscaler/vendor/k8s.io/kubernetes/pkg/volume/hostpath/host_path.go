@@ -160,7 +160,7 @@ func (plugin *hostPathPlugin) NewDeleter(spec *volume.Spec) (volume.Deleter, err
 
 func (plugin *hostPathPlugin) NewProvisioner(options volume.VolumeOptions) (volume.Provisioner, error) {
 	if !plugin.config.ProvisioningEnabled {
-		return nil, fmt.Errorf("Provisioning in volume plugin %q is disabled", plugin.GetPluginName())
+		return nil, fmt.Errorf("provisioning in volume plugin %q is disabled", plugin.GetPluginName())
 	}
 	return newProvisioner(options, plugin.host, plugin)
 }
@@ -341,7 +341,7 @@ func getVolumeSource(spec *volume.Spec) (*v1.HostPathVolumeSource, bool, error) 
 		return spec.PersistentVolume.Spec.HostPath, spec.ReadOnly, nil
 	}
 
-	return nil, false, fmt.Errorf("Spec does not reference an HostPath volume type")
+	return nil, false, fmt.Errorf("spec does not reference an HostPath volume type")
 }
 
 type hostPathTypeChecker interface {
@@ -370,7 +370,11 @@ func (ftc *fileTypeChecker) IsFile() bool {
 	if !ftc.Exists() {
 		return false
 	}
-	return !ftc.IsDir()
+	pathType, err := ftc.hu.GetFileType(ftc.path)
+	if err != nil {
+		return false
+	}
+	return string(pathType) == string(v1.HostPathFile)
 }
 
 func (ftc *fileTypeChecker) MakeFile() error {

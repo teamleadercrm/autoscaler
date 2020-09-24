@@ -22,11 +22,14 @@ import (
 
 	"github.com/pkg/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
 const (
 	nodeGroupMinSizeAnnotationKey = "cluster.k8s.io/cluster-api-autoscaler-node-group-min-size"
 	nodeGroupMaxSizeAnnotationKey = "cluster.k8s.io/cluster-api-autoscaler-node-group-max-size"
+	clusterNameLabel              = "cluster.x-k8s.io/cluster-name"
+	deprecatedClusterNameLabel    = "cluster.k8s.io/cluster-name"
 )
 
 var (
@@ -109,9 +112,9 @@ func parseScalingBounds(annotations map[string]string) (int, int, error) {
 	return minSize, maxSize, nil
 }
 
-func machineOwnerRef(machine *Machine) *metav1.OwnerReference {
-	for _, ref := range machine.OwnerReferences {
-		if ref.Kind == "MachineSet" && ref.Name != "" {
+func getOwnerForKind(u *unstructured.Unstructured, kind string) *metav1.OwnerReference {
+	for _, ref := range u.GetOwnerReferences() {
+		if ref.Kind == kind && ref.Name != "" {
 			return ref.DeepCopy()
 		}
 	}
@@ -119,32 +122,16 @@ func machineOwnerRef(machine *Machine) *metav1.OwnerReference {
 	return nil
 }
 
-func machineIsOwnedByMachineSet(machine *Machine, machineSet *MachineSet) bool {
-	if ref := machineOwnerRef(machine); ref != nil {
-		return ref.UID == machineSet.UID
-	}
-	return false
+func machineOwnerRef(machine *unstructured.Unstructured) *metav1.OwnerReference {
+	return getOwnerForKind(machine, machineSetKind)
 }
 
-func machineSetMachineDeploymentRef(machineSet *MachineSet) *metav1.OwnerReference {
-	for _, ref := range machineSet.OwnerReferences {
-		if ref.Kind == "MachineDeployment" {
-			return ref.DeepCopy()
-		}
-	}
-
-	return nil
+func machineSetOwnerRef(machineSet *unstructured.Unstructured) *metav1.OwnerReference {
+	return getOwnerForKind(machineSet, machineDeploymentKind)
 }
 
-func machineSetHasMachineDeploymentOwnerRef(machineSet *MachineSet) bool {
-	return machineSetMachineDeploymentRef(machineSet) != nil
-}
-
-func machineSetIsOwnedByMachineDeployment(machineSet *MachineSet, machineDeployment *MachineDeployment) bool {
-	if ref := machineSetMachineDeploymentRef(machineSet); ref != nil {
-		return ref.UID == machineDeployment.UID
-	}
-	return false
+func machineSetHasMachineDeploymentOwnerRef(machineSet *unstructured.Unstructured) bool {
+	return machineSetOwnerRef(machineSet) != nil
 }
 
 // normalizedProviderString splits s on '/' returning everything after
@@ -152,4 +139,36 @@ func machineSetIsOwnedByMachineDeployment(machineSet *MachineSet, machineDeploym
 func normalizedProviderString(s string) normalizedProviderID {
 	split := strings.Split(s, "/")
 	return normalizedProviderID(split[len(split)-1])
+}
+
+func clusterNameFromResource(r *unstructured.Unstructured) string {
+	// Use Spec.ClusterName if defined (only available on v1alpha3+ types)
+	clusterName, found, err := unstructured.NestedString(r.Object, "spec", "clusterName")
+	if err != nil {
+		return ""
+	}
+
+	if found {
+		return clusterName
+	}
+
+	// Fallback to value of clusterNameLabel
+	if clusterName, ok := r.GetLabels()[clusterNameLabel]; ok {
+		return clusterName
+	}
+
+	// fallback for backward compatibility for deprecatedClusterNameLabel
+	if clusterName, ok := r.GetLabels()[deprecatedClusterNameLabel]; ok {
+		return clusterName
+	}
+
+	// fallback for cluster-api v1alpha1 cluster linking
+	templateLabels, found, err := unstructured.NestedStringMap(r.UnstructuredContent(), "spec", "template", "metadata", "labels")
+	if found {
+		if clusterName, ok := templateLabels[deprecatedClusterNameLabel]; ok {
+			return clusterName
+		}
+	}
+
+	return ""
 }

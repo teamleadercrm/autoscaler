@@ -35,7 +35,7 @@ go_library(
         "//staging/src/k8s.io/client-go/tools/cache:go_default_library",
         "//staging/src/k8s.io/client-go/tools/record:go_default_library",
         "//staging/src/k8s.io/cloud-provider:go_default_library",
-        "//vendor/k8s.io/klog:go_default_library",
+        "//vendor/k8s.io/klog/v2:go_default_library",
         "//vendor/k8s.io/utils/exec:go_default_library",
         "//vendor/k8s.io/utils/mount:go_default_library",
     ] + select({
@@ -96,8 +96,8 @@ filegroup(
     srcs = [
         ":package-srcs",
         "//pkg/volume/awsebs:all-srcs",
-        "//pkg/volume/azure_dd:all-srcs",
         "//pkg/volume/azure_file:all-srcs",
+        "//pkg/volume/azuredd:all-srcs",
         "//pkg/volume/cephfs:all-srcs",
         "//pkg/volume/cinder:all-srcs",
         "//pkg/volume/configmap:all-srcs",
