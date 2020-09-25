@@ -43,6 +43,7 @@ import (
 	"k8s.io/autoscaler/cluster-autoscaler/metrics"
 	ca_processors "k8s.io/autoscaler/cluster-autoscaler/processors"
 	"k8s.io/autoscaler/cluster-autoscaler/processors/nodegroupset"
+	"k8s.io/autoscaler/cluster-autoscaler/simulator"
 	"k8s.io/autoscaler/cluster-autoscaler/utils/errors"
 	kube_util "k8s.io/autoscaler/cluster-autoscaler/utils/kubernetes"
 	"k8s.io/autoscaler/cluster-autoscaler/utils/units"
@@ -54,9 +55,9 @@ import (
 	"k8s.io/client-go/tools/leaderelection/resourcelock"
 	kube_flag "k8s.io/component-base/cli/flag"
 	componentbaseconfig "k8s.io/component-base/config"
+	"k8s.io/component-base/config/options"
 	"k8s.io/component-base/metrics/legacyregistry"
-	"k8s.io/klog"
-	"k8s.io/kubernetes/pkg/client/leaderelectionconfig"
+	klog "k8s.io/klog/v2"
 )
 
 // MultiStringFlag is a flag for passing multiple parameters using same flag
@@ -168,10 +169,11 @@ var (
 	regional                      = flag.Bool("regional", false, "Cluster is regional.")
 	newPodScaleUpDelay            = flag.Duration("new-pod-scale-up-delay", 0*time.Second, "Pods less than this old will not be considered for scale-up.")
 
-	ignoreTaintsFlag          = multiStringFlag("ignore-taint", "Specifies a taint to ignore in node templates when considering to scale a node group")
-	balancingIgnoreLabelsFlag = multiStringFlag("balancing-ignore-label", "Specifies a label to ignore in addition to the basic and cloud-provider set of labels when comparing if two node groups are similar")
-	awsUseStaticInstanceList  = flag.Bool("aws-use-static-instance-list", false, "Should CA fetch instance types in runtime or use a static list. AWS only")
-	enableProfiling           = flag.Bool("profiling", false, "Is debug/pprof endpoint enabled")
+	ignoreTaintsFlag                   = multiStringFlag("ignore-taint", "Specifies a taint to ignore in node templates when considering to scale a node group")
+	balancingIgnoreLabelsFlag          = multiStringFlag("balancing-ignore-label", "Specifies a label to ignore in addition to the basic and cloud-provider set of labels when comparing if two node groups are similar")
+	awsUseStaticInstanceList           = flag.Bool("aws-use-static-instance-list", false, "Should CA fetch instance types in runtime or use a static list. AWS only")
+	enableProfiling                    = flag.Bool("profiling", false, "Is debug/pprof endpoint enabled")
+	clusterAPICloudConfigAuthoritative = flag.Bool("clusterapi-cloud-config-authoritative", false, "Treat the cloud-config flag authoritatively (do not fallback to using kubeconfig flag). ClusterAPI only")
 )
 
 func createAutoscalingOptions() config.AutoscalingOptions {
@@ -192,54 +194,55 @@ func createAutoscalingOptions() config.AutoscalingOptions {
 		klog.Fatalf("Failed to parse flags: %v", err)
 	}
 	return config.AutoscalingOptions{
-		CloudConfig:                      *cloudConfig,
-		CloudProviderName:                *cloudProviderFlag,
-		NodeGroupAutoDiscovery:           *nodeGroupAutoDiscoveryFlag,
-		MaxTotalUnreadyPercentage:        *maxTotalUnreadyPercentage,
-		OkTotalUnreadyCount:              *okTotalUnreadyCount,
-		ScaleUpFromZero:                  *scaleUpFromZero,
-		EstimatorName:                    *estimatorFlag,
-		ExpanderName:                     *expanderFlag,
-		IgnoreDaemonSetsUtilization:      *ignoreDaemonSetsUtilization,
-		IgnoreMirrorPodsUtilization:      *ignoreMirrorPodsUtilization,
-		MaxBulkSoftTaintCount:            *maxBulkSoftTaintCount,
-		MaxBulkSoftTaintTime:             *maxBulkSoftTaintTime,
-		MaxEmptyBulkDelete:               *maxEmptyBulkDeleteFlag,
-		MaxGracefulTerminationSec:        *maxGracefulTerminationFlag,
-		MaxNodeProvisionTime:             *maxNodeProvisionTime,
-		MaxNodesTotal:                    *maxNodesTotal,
-		MaxCoresTotal:                    maxCoresTotal,
-		MinCoresTotal:                    minCoresTotal,
-		MaxMemoryTotal:                   maxMemoryTotal,
-		MinMemoryTotal:                   minMemoryTotal,
-		GpuTotal:                         parsedGpuTotal,
-		NodeGroups:                       *nodeGroupsFlag,
-		ScaleDownDelayAfterAdd:           *scaleDownDelayAfterAdd,
-		ScaleDownDelayAfterDelete:        *scaleDownDelayAfterDelete,
-		ScaleDownDelayAfterFailure:       *scaleDownDelayAfterFailure,
-		ScaleDownEnabled:                 *scaleDownEnabled,
-		ScaleDownUnneededTime:            *scaleDownUnneededTime,
-		ScaleDownUnreadyTime:             *scaleDownUnreadyTime,
-		ScaleDownUtilizationThreshold:    *scaleDownUtilizationThreshold,
-		ScaleDownGpuUtilizationThreshold: *scaleDownGpuUtilizationThreshold,
-		ScaleDownNonEmptyCandidatesCount: *scaleDownNonEmptyCandidatesCount,
-		ScaleDownCandidatesPoolRatio:     *scaleDownCandidatesPoolRatio,
-		ScaleDownCandidatesPoolMinCount:  *scaleDownCandidatesPoolMinCount,
-		WriteStatusConfigMap:             *writeStatusConfigMapFlag,
-		BalanceSimilarNodeGroups:         *balanceSimilarNodeGroupsFlag,
-		ConfigNamespace:                  *namespace,
-		ClusterName:                      *clusterName,
-		NodeAutoprovisioningEnabled:      *nodeAutoprovisioningEnabled,
-		MaxAutoprovisionedNodeGroupCount: *maxAutoprovisionedNodeGroupCount,
-		UnremovableNodeRecheckTimeout:    *unremovableNodeRecheckTimeout,
-		ExpendablePodsPriorityCutoff:     *expendablePodsPriorityCutoff,
-		Regional:                         *regional,
-		NewPodScaleUpDelay:               *newPodScaleUpDelay,
-		IgnoredTaints:                    *ignoreTaintsFlag,
-		BalancingExtraIgnoredLabels:      *balancingIgnoreLabelsFlag,
-		KubeConfigPath:                   *kubeConfigFile,
-		NodeDeletionDelayTimeout:         *nodeDeletionDelayTimeout,
-		AWSUseStaticInstanceList:         *awsUseStaticInstanceList,
+		CloudConfig:                        *cloudConfig,
+		CloudProviderName:                  *cloudProviderFlag,
+		NodeGroupAutoDiscovery:             *nodeGroupAutoDiscoveryFlag,
+		MaxTotalUnreadyPercentage:          *maxTotalUnreadyPercentage,
+		OkTotalUnreadyCount:                *okTotalUnreadyCount,
+		ScaleUpFromZero:                    *scaleUpFromZero,
+		EstimatorName:                      *estimatorFlag,
+		ExpanderName:                       *expanderFlag,
+		IgnoreDaemonSetsUtilization:        *ignoreDaemonSetsUtilization,
+		IgnoreMirrorPodsUtilization:        *ignoreMirrorPodsUtilization,
+		MaxBulkSoftTaintCount:              *maxBulkSoftTaintCount,
+		MaxBulkSoftTaintTime:               *maxBulkSoftTaintTime,
+		MaxEmptyBulkDelete:                 *maxEmptyBulkDeleteFlag,
+		MaxGracefulTerminationSec:          *maxGracefulTerminationFlag,
+		MaxNodeProvisionTime:               *maxNodeProvisionTime,
+		MaxNodesTotal:                      *maxNodesTotal,
+		MaxCoresTotal:                      maxCoresTotal,
+		MinCoresTotal:                      minCoresTotal,
+		MaxMemoryTotal:                     maxMemoryTotal,
+		MinMemoryTotal:                     minMemoryTotal,
+		GpuTotal:                           parsedGpuTotal,
+		NodeGroups:                         *nodeGroupsFlag,
+		ScaleDownDelayAfterAdd:             *scaleDownDelayAfterAdd,
+		ScaleDownDelayAfterDelete:          *scaleDownDelayAfterDelete,
+		ScaleDownDelayAfterFailure:         *scaleDownDelayAfterFailure,
+		ScaleDownEnabled:                   *scaleDownEnabled,
+		ScaleDownUnneededTime:              *scaleDownUnneededTime,
+		ScaleDownUnreadyTime:               *scaleDownUnreadyTime,
+		ScaleDownUtilizationThreshold:      *scaleDownUtilizationThreshold,
+		ScaleDownGpuUtilizationThreshold:   *scaleDownGpuUtilizationThreshold,
+		ScaleDownNonEmptyCandidatesCount:   *scaleDownNonEmptyCandidatesCount,
+		ScaleDownCandidatesPoolRatio:       *scaleDownCandidatesPoolRatio,
+		ScaleDownCandidatesPoolMinCount:    *scaleDownCandidatesPoolMinCount,
+		WriteStatusConfigMap:               *writeStatusConfigMapFlag,
+		BalanceSimilarNodeGroups:           *balanceSimilarNodeGroupsFlag,
+		ConfigNamespace:                    *namespace,
+		ClusterName:                        *clusterName,
+		NodeAutoprovisioningEnabled:        *nodeAutoprovisioningEnabled,
+		MaxAutoprovisionedNodeGroupCount:   *maxAutoprovisionedNodeGroupCount,
+		UnremovableNodeRecheckTimeout:      *unremovableNodeRecheckTimeout,
+		ExpendablePodsPriorityCutoff:       *expendablePodsPriorityCutoff,
+		Regional:                           *regional,
+		NewPodScaleUpDelay:                 *newPodScaleUpDelay,
+		IgnoredTaints:                      *ignoreTaintsFlag,
+		BalancingExtraIgnoredLabels:        *balancingIgnoreLabelsFlag,
+		KubeConfigPath:                     *kubeConfigFile,
+		NodeDeletionDelayTimeout:           *nodeDeletionDelayTimeout,
+		AWSUseStaticInstanceList:           *awsUseStaticInstanceList,
+		ClusterAPICloudConfigAuthoritative: *clusterAPICloudConfigAuthoritative,
 	}
 }
 
@@ -293,6 +296,7 @@ func buildAutoscaler() (core.Autoscaler, error) {
 
 	opts := core.AutoscalerOptions{
 		AutoscalingOptions: autoscalingOptions,
+		ClusterSnapshot:    simulator.NewDeltaClusterSnapshot(),
 		KubeClient:         kubeClient,
 		EventsKubeClient:   eventsKubeClient,
 	}
@@ -311,8 +315,9 @@ func buildAutoscaler() (core.Autoscaler, error) {
 		Comparator: nodeInfoComparatorBuilder(autoscalingOptions.BalancingExtraIgnoredLabels),
 	}
 
-	// This metric should be published only once.
+	// These metrics should be published only once.
 	metrics.UpdateNapEnabled(autoscalingOptions.NodeAutoprovisioningEnabled)
+	metrics.UpdateMaxNodesCount(autoscalingOptions.MaxNodesTotal)
 
 	// Create autoscaler.
 	return core.NewAutoscaler(opts)
@@ -365,7 +370,7 @@ func main() {
 	leaderElection := defaultLeaderElectionConfiguration()
 	leaderElection.LeaderElect = true
 
-	leaderelectionconfig.BindFlags(&leaderElection, pflag.CommandLine)
+	options.BindLeaderElectionFlags(&leaderElection, pflag.CommandLine)
 	kube_flag.InitFlags()
 	healthCheck := metrics.NewHealthCheck(*maxInactivityTimeFlag, *maxFailingTimeFlag)
 

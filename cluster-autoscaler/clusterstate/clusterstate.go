@@ -34,9 +34,9 @@ import (
 	apiv1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
-	schedulernodeinfo "k8s.io/kubernetes/pkg/scheduler/nodeinfo"
+	schedulerframework "k8s.io/kubernetes/pkg/scheduler/framework/v1alpha1"
 
-	"k8s.io/klog"
+	klog "k8s.io/klog/v2"
 )
 
 const (
@@ -127,7 +127,7 @@ type ClusterStateRegistry struct {
 	scaleUpRequests                    map[string]*ScaleUpRequest // nodeGroupName -> ScaleUpRequest
 	scaleDownRequests                  []*ScaleDownRequest
 	nodes                              []*apiv1.Node
-	nodeInfosForGroups                 map[string]*schedulernodeinfo.NodeInfo
+	nodeInfosForGroups                 map[string]*schedulerframework.NodeInfo
 	cloudProvider                      cloudprovider.CloudProvider
 	perNodeGroupReadiness              map[string]Readiness
 	totalReadiness                     Readiness
@@ -287,7 +287,7 @@ func (csr *ClusterStateRegistry) backoffNodeGroup(nodeGroup cloudprovider.NodeGr
 func (csr *ClusterStateRegistry) RegisterFailedScaleUp(nodeGroup cloudprovider.NodeGroup, reason metrics.FailedScaleUpReason, currentTime time.Time) {
 	csr.Lock()
 	defer csr.Unlock()
-	csr.registerFailedScaleUpNoLock(nodeGroup, reason, cloudprovider.OtherErrorClass, "cloudProviderError", currentTime)
+	csr.registerFailedScaleUpNoLock(nodeGroup, reason, cloudprovider.OtherErrorClass, string(reason), currentTime)
 }
 
 func (csr *ClusterStateRegistry) registerFailedScaleUpNoLock(nodeGroup cloudprovider.NodeGroup, reason metrics.FailedScaleUpReason, errorClass cloudprovider.InstanceErrorClass, errorCode string, currentTime time.Time) {
@@ -297,7 +297,7 @@ func (csr *ClusterStateRegistry) registerFailedScaleUpNoLock(nodeGroup cloudprov
 }
 
 // UpdateNodes updates the state of the nodes in the ClusterStateRegistry and recalculates the stats
-func (csr *ClusterStateRegistry) UpdateNodes(nodes []*apiv1.Node, nodeInfosForGroups map[string]*schedulernodeinfo.NodeInfo, currentTime time.Time) error {
+func (csr *ClusterStateRegistry) UpdateNodes(nodes []*apiv1.Node, nodeInfosForGroups map[string]*schedulerframework.NodeInfo, currentTime time.Time) error {
 	csr.updateNodeGroupMetrics()
 	targetSizes, err := getTargetSizes(csr.cloudProvider)
 	if err != nil {
